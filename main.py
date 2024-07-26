@@ -48,21 +48,28 @@ def connect():  # Connect to Wi-Fi - remove #
     #Connect to WLAN
     #wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
-    wlan.connect(ssid, password)
     if debug:
-        print('Connecting', end='')
+        print('WiFi Activated')
+    wlan.connect(ssid, password)
     attempts = 10
+    if debug:
+        print('Link ', end='')
     while wlan.isconnected() == False:
         if debug:
             print('.', end='')
-        sleep(2)
+        # LED option to blink while connecting to WiFi
+        led.off()
+        sleep(.5)
+        led.on()
+        sleep(.5)
         attempts = attempts -1
         if attempts == 0:
+            if debug:
+                print('failed')
             return 0
     if debug:
-        print('.')
-    ip = wlan.ifconfig()[0]
-    return ip
+        print('acquired')
+    return wlan.ifconfig()[0]
 
 def report(server, time, temp, humi):
     # Report Temp Humidity and Time to MQTT
@@ -72,8 +79,11 @@ def report(server, time, temp, humi):
         c.publish(b"sensor/temperature", temp)
         c.publish(b"sensor/humidity", humi)
         c.publish(b"sensor/time", time)
-    finally:    
         c.disconnect()
+    except:
+        if debug:
+            print('Could not connect to MQTT server')          
+
 
 # Set up LED to turn it on while active, off when sleeping
 led = Pin("LED", Pin.OUT)
@@ -84,30 +94,45 @@ sensor = aht.AHT2x(i2c, crc=True)
 wlan = network.WLAN(network.STA_IF)
 
 
-# Main Loop
+#Main Loop
 while True:
+    # LED option to turn on when working, off when sleeping
     led.on()
     sensor.reset
+    sleep(4) # this is here so it's easier to interrupt the main.py program that runs automatically.
     ip=connect()
-    if debug:
-        print(f'Connected on {ip}')
-    #ntptime.settime(UTC_offset, ntp_host)
-    ntptime.settime()    
-    timeobj=time.localtime()
-    asctime=str(timeobj[0])+':'+str(timeobj[1])+':'+str(timeobj[2])+':'+str(timeobj[3])+':'+str(timeobj[4])+':'+str(timeobj[5])
-    if debug:
-        print(asctime)
-    humi = sensor.humidity
-    if debug:
-        print("Humidity: {:.2f}".format(humi))
-    tempf = sensor.temperature / 5 * 9 + 32
-    if debug:
-        print("Temperature C: {:.2f}".format(sensor.temperature))
-        print("Temperature F: {:.2f}".format(tempf))
-    report(mqtt_host, asctime, str(tempf), str(sensor.humidity))
+    if wlan.isconnected():
+        if debug:
+            print(f'Connected on {wlan.ifconfig()}')
+        #ntptime.settime(UTC_offset, ntp_host)
+        try:
+            ntptime.settime()    
+        except:
+            if debug:
+                print('Could not get time from NTP server')
+        timeobj=time.localtime()
+        asctime = '{}:{}:{}:{}:{}:{}'.format(*timeobj)
+        if debug:
+            print(asctime)
+        humi = '{:.0f}'.format(sensor.humidity)    
+        if debug:
+            print("Humidity: " + humi + "%")
+        temp = sensor.temperature
+        tempc = '{:.1f}'.format(temp)
+        tempf = '{:.1f}'.format(temp / 5 * 9 + 32)
+        if debug:
+            print("Temperature C: " + tempc)
+            print("Temperature F: " + tempf)
+        report(mqtt_host, asctime, tempf, humi)
+    else:
+        if debug:
+            print('No IP connection, sleep and try again')
+    #try:
     wlan.deinit()  #This turns off the WiFi Radio while Pico sleeps
+    # turn off LED when sleeping
     led.off()
-    machine.lightsleep(test_interval * 60000)  #Light Sleep is a lower power mode than "sleep"
+    machine.lightsleep(int(test_interval * 60000))  #Light Sleep is a lower power mode than "sleep"
     if debug:
+        sleep(2) # Allow the USB to re-establish so we can print again. 
         print(f"Waking Up from {test_interval} minutes sleep")
 
